@@ -507,6 +507,21 @@
     "protest", "demonstrat", "revolt", "uprising", "unrest", "riot", "opposition",
     "resign", "rally", "rallies", "march", "kushner", "flamingo", "zvernec", "narta",
   ];
+  // A generic place word + a generic protest word isn't enough on its own —
+  // that combination also matches plenty of unrelated Albanian-diaspora
+  // protests (e.g. Albanians rallying in support of former UÇK/KLA
+  // commanders has nothing to do with this movement, but still contains
+  // "Albanian" + "protest"). Require the article to also either be specific
+  // to Tirana (the movement's epicenter) or name something specific to this
+  // movement (its figures, the resort project, its own nickname).
+  const MOVEMENT_ANCHORS = [
+    "flamingo", "kushner", "zvernec", "narta", "rama", "berisha", "resort", "trump", "kryeministr",
+  ];
+  // Coverage that just says "Nth day/night [in a row]" without naming any
+  // specific figure is still a strong, distinctive signal of this ongoing,
+  // day-counted movement (the same framing this site's own tracker uses) —
+  // so it's treated as an anchor too, in English and Albanian.
+  const DAY_COUNT_PATTERN = /\b\d{1,3}(st|nd|rd|th)?[\s-]*(day|night|dite|nate)\b/;
 
   const els = {
     refreshBtn: document.getElementById("refreshBtn"),
@@ -528,7 +543,14 @@
 
   function isRelevant(title) {
     const haystack = normalize(title);
-    return PLACE_KEYWORDS.some((k) => haystack.includes(k)) && TOPIC_KEYWORDS.some((k) => haystack.includes(k));
+    const hasPlace = PLACE_KEYWORDS.some((k) => haystack.includes(k));
+    const hasTopic = TOPIC_KEYWORDS.some((k) => haystack.includes(k));
+    if (!hasPlace || !hasTopic) return false;
+
+    const isAboutTirana = haystack.includes("tirana") || haystack.includes("tirane");
+    if (isAboutTirana) return true;
+
+    return MOVEMENT_ANCHORS.some((k) => haystack.includes(k)) || DAY_COUNT_PATTERN.test(haystack);
   }
 
   function normalizeUrl(url) {
