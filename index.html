@@ -198,6 +198,7 @@
 
   .toolbar__count { font-weight: 700; font-size: 1.05rem; }
   .toolbar__meta { font-size: 0.85rem; color: var(--text-muted); text-align: right; }
+  .toolbar__meta .toolbar__cache { display: block; font-size: 0.78rem; opacity: 0.8; margin-top: 0.1rem; }
 
   /* ---------- Dynamic category filters ---------- */
 
@@ -510,6 +511,7 @@
       <div class="toolbar__count" id="resultCount"></div>
       <div class="toolbar__meta">
         Auto-refreshes every 6 hours &middot; Last searched: <span id="lastSearched">—</span>
+        <span class="toolbar__cache">Cached summaries last updated: <span id="cacheUpdated">—</span></span>
       </div>
     </section>
 
@@ -535,8 +537,21 @@
     <p>
       Live search performed via the <a href="https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/" target="_blank" rel="noopener noreferrer">GDELT Project</a> API
       (free, keyless, real-time global news search), refreshed on load, on demand, and every 6 hours.
+      Article summaries (English or Albanian, in each source's own language) are scraped from each article's own page by a
+      scheduled <a href="https://github.com/features/actions" target="_blank" rel="noopener noreferrer">GitHub Action</a>
+      and baked directly into this page every 6 hours — see this repo's <code>.github/workflows/</code> for how.
     </p>
   </footer>
+
+  <!--
+    Rebuilt automatically every 6 hours by .github/workflows/refresh-articles.yml —
+    do not hand-edit; changes here are overwritten on the next scheduled run.
+    Real per-article summaries are only obtainable server-side (publishers
+    don't grant browsers cross-origin access to scrape their own pages), so
+    this cache is what supplies them; the live GDELT search below still runs
+    on every load/click/6h for freshness, and is merged with whatever's here.
+  -->
+  <script type="application/json" id="cachedArticles">{"generatedAt":null,"articles":[]}</script>
 
 <script>
   /* ================= Protest-day tracker ================= */
@@ -615,6 +630,7 @@
     retryBtn: document.getElementById("retryBtn"),
     statusText: document.getElementById("statusText"),
     lastSearched: document.getElementById("lastSearched"),
+    cacheUpdated: document.getElementById("cacheUpdated"),
     resultCount: document.getElementById("resultCount"),
     loadingBar: document.getElementById("loadingBar"),
     categoryBar: document.getElementById("categoryBar"),
@@ -739,12 +755,15 @@
       }));
   }
 
-  // GDELT enforces a strict ~1-request-per-5-seconds limit and returns 429
-  // (or, sometimes, a plain-text notice instead of JSON) whenever a visitor's
-  // IP has been sharing that budget with other traffic. A couple of quiet,
-  // spaced-out retries absorb that transient case so real visitors aren't
-  // shown a scary error for something that clears up in a few seconds.
-  const RETRY_DELAYS_MS = [4000, 7000];
+  // GDELT *claims* a ~1-request-per-5-second limit, but in practice its
+  // real cooldown often runs noticeably longer than that (observed 429s
+  // persisting across multiple 6-second-spaced attempts) — likely because
+  // its throttling budget is shared across everyone hitting it from a given
+  // network/region, not just this one page. A short retry window isn't
+  // enough to reliably absorb that, so this uses more attempts with a
+  // longer backoff, and keeps the user informed while it works instead of
+  // failing fast.
+  const RETRY_DELAYS_MS = [5000, 9000, 14000, 20000];
 
   async function fetchLive() {
     let lastError;
@@ -756,10 +775,41 @@
         const isRateLimited = error.status === 429;
         if (!isRateLimited || attempt === RETRY_DELAYS_MS.length) throw error;
         console.warn(`GDELT rate-limited (attempt ${attempt + 1}); retrying…`, error);
+        const secondsLeft = Math.round(RETRY_DELAYS_MS[attempt] / 1000);
+        els.statusText.textContent = `News source is busy — retrying in ${secondsLeft}s… (attempt ${attempt + 2} of ${RETRY_DELAYS_MS.length + 1})`;
         await sleep(RETRY_DELAYS_MS[attempt]);
       }
     }
     throw lastError;
+  }
+
+  // The embedded <script id="cachedArticles"> block is rewritten in place by
+  // a scheduled GitHub Action (see .github/workflows/) that scrapes each
+  // article's own page for a real summary server-side — something the
+  // browser can't do itself (CORS). Reading it here needs no network
+  // request at all since it's baked into this same file at deploy time.
+  function readEmbeddedCache() {
+    try {
+      const el = document.getElementById("cachedArticles");
+      if (!el) return { generatedAt: null, articles: [] };
+      const data = JSON.parse(el.textContent || "{}");
+      return {
+        generatedAt: data.generatedAt || null,
+        articles: (Array.isArray(data.articles) ? data.articles : []).map((a) => ({
+          title: a.title,
+          url: a.url,
+          domain: a.domain || null,
+          country: a.country || null,
+          language: a.language || null,
+          publishedAt: a.publishedAt ? new Date(a.publishedAt) : null,
+          image: a.image || null,
+          summary: a.summary || null,
+        })),
+      };
+    } catch (error) {
+      console.warn("Embedded article cache is malformed:", error);
+      return { generatedAt: null, articles: [] };
+    }
   }
 
   function dedupeAndSort(articles) {
@@ -1280,15 +1330,24 @@
     setLoading(true);
     els.errorState.classList.add("hidden");
 
-    let articles = [];
+    const cache = readEmbeddedCache();
+    let liveArticles = [];
     let searchFailed = false;
 
     try {
-      articles = dedupeAndSort(await fetchLive());
+      liveArticles = await fetchLive();
     } catch (error) {
       console.warn("Live GDELT search failed:", error);
       searchFailed = true;
     }
+
+    // The embedded cache (with real, server-scraped summaries) is always
+    // available with zero network calls, so a live-search failure degrades
+    // to "show the cached articles" rather than a hard error whenever
+    // there's cached data to fall back on.
+    const articles = dedupeAndSort([...cache.articles, ...liveArticles]);
+
+    els.cacheUpdated.textContent = cache.generatedAt ? formatDateTime(new Date(cache.generatedAt)) : "not built yet";
 
     if (articles.length > 0) {
       const categories = categorizeArticles(articles); // mutates each article with a .category
@@ -1301,7 +1360,7 @@
       els.emptyState.classList.add("hidden");
       els.errorState.classList.add("hidden");
       els.lastSearched.textContent = formatDateTime(new Date());
-      els.statusText.textContent = "Up to date";
+      els.statusText.textContent = searchFailed ? "Showing cached articles — live search unavailable" : "Up to date";
     } else {
       state.articles = [];
       state.page = 1;
