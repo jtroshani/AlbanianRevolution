@@ -213,7 +213,7 @@
     margin-top: 0.15rem;
   }
 
-  /* ---------- About section ---------- */
+  /* ---------- About section (collapsible) ---------- */
 
   .about {
     background: var(--surface);
@@ -223,25 +223,56 @@
   .about__inner {
     max-width: 760px;
     margin: 0 auto;
-    padding: 3.5rem 1.5rem;
+    padding: 1.75rem 1.5rem;
   }
 
-  .about h2 {
-    margin: 0 0 1.4rem;
-    font-size: clamp(1.5rem, 3vw, 2rem);
+  .about__summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    cursor: pointer;
+    list-style: none;
+    font-size: clamp(1.25rem, 2.6vw, 1.6rem);
     font-weight: 800;
     letter-spacing: -0.01em;
     color: var(--text);
   }
 
-  .about p {
+  .about__summary::-webkit-details-marker { display: none; }
+  .about__summary::marker { content: ""; }
+
+  .about__summary:hover { color: var(--albania-red); }
+
+  .about__chevron {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--albania-red);
+    font-size: 0.9rem;
+    transition: transform 0.2s ease;
+  }
+
+  .about__details[open] .about__chevron { transform: rotate(180deg); }
+
+  .about__body {
+    margin-top: 1.5rem;
+  }
+
+  .about__body p {
     margin: 0 0 1.15rem;
     font-size: 1.05rem;
     line-height: 1.75;
     color: var(--text-muted);
   }
 
-  .about p:last-child { margin-bottom: 0; }
+  .about__body p:last-child { margin-bottom: 0; }
 
   /* ---------- Main container ---------- */
 
@@ -575,11 +606,18 @@
 
   <section class="about">
     <div class="about__inner">
-      <h2>A Nation Rises, Peacefully, for Its Own Future</h2>
-      <p>Across Albania, in the streets of Tirana and in solidarity gatherings from Kosovo to the diaspora abroad, ordinary citizens have sustained an extraordinary, peaceful movement — one now stretching well over a month. What began as a stand against a single contested resort project on protected coastland has grown into something far larger: a collective demand that the country be governed with honesty, transparency, and respect for its people.</p>
-      <p>Beneath the banners and the now-iconic pink flamingos lies a deeper reckoning. Protesters speak of corruption they feel has gone unanswered for too long, of institutions — courts, oversight bodies, public administration — too weak or too compromised to hold power accountable. They speak of salaries that cannot sustain a decent life, of opportunity that seems to exist everywhere except at home, and of the quiet tragedy of mass emigration: a generation raised, educated, and then lost to airports and borders, because the country could not offer them a future worth staying for.</p>
-      <p>What makes this movement remarkable is not only what it opposes, but how it carries itself. Students stand beside grandparents. Emigrants return, if only for a weekend, to march alongside those who stayed. Veterans of earlier struggles walk next to teenagers who have never known another Albania. There is no mob here — there is discipline, humor, grief, and resolve, expressed banner by banner, night after night, without violence.</p>
-      <p>At its heart, this is not a protest against a country. It is an act of love for one — a plea, dignified and unrelenting, that Albania finally become a place its own children choose to build their lives in, rather than one they must leave to find them.</p>
+      <details class="about__details">
+        <summary class="about__summary">
+          <span>A Nation Rises, Peacefully, for Its Own Future</span>
+          <span class="about__chevron" aria-hidden="true">&#9662;</span>
+        </summary>
+        <div class="about__body">
+          <p>Across Albania, in the streets of Tirana and in solidarity gatherings from Kosovo to the diaspora abroad, ordinary citizens have sustained an extraordinary, peaceful movement — one now stretching well over a month. What began as a stand against a single contested resort project on protected coastland has grown into something far larger: a collective demand that the country be governed with honesty, transparency, and respect for its people.</p>
+          <p>Beneath the banners and the now-iconic pink flamingos lies a deeper reckoning. Protesters speak of corruption they feel has gone unanswered for too long, of institutions — courts, oversight bodies, public administration — too weak or too compromised to hold power accountable. They speak of salaries that cannot sustain a decent life, of opportunity that seems to exist everywhere except at home, and of the quiet tragedy of mass emigration: a generation raised, educated, and then lost to airports and borders, because the country could not offer them a future worth staying for.</p>
+          <p>What makes this movement remarkable is not only what it opposes, but how it carries itself. Students stand beside grandparents. Emigrants return, if only for a weekend, to march alongside those who stayed. Veterans of earlier struggles walk next to teenagers who have never known another Albania. There is no mob here — there is discipline, humor, grief, and resolve, expressed banner by banner, night after night, without violence.</p>
+          <p>At its heart, this is not a protest against a country. It is an act of love for one — a plea, dignified and unrelenting, that Albania finally become a place its own children choose to build their lives in, rather than one they must leave to find them.</p>
+        </div>
+      </details>
     </div>
   </section>
 
