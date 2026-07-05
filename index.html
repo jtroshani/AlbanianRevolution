@@ -699,7 +699,11 @@
     return `${days}d ago`;
   }
 
-  async function fetchLive() {
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function fetchLiveOnce() {
     const params = new URLSearchParams({
       query: CLIENT_GDELT_QUERY,
       mode: "artlist",
@@ -719,7 +723,11 @@
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error("GDELT returned a non-JSON (likely rate-limited) response");
+      // GDELT sends a plain-text rate-limit notice (not JSON) when throttling,
+      // even on an HTTP 200 response — treat it the same as a 429.
+      const err = new Error("GDELT returned a non-JSON (likely rate-limited) response");
+      err.status = 429;
+      throw err;
     }
     return (data.articles || [])
       .filter((a) => isRelevant(a.title))
@@ -733,6 +741,29 @@
         image: a.socialimage || null,
         summary: null,
       }));
+  }
+
+  // GDELT enforces a strict ~1-request-per-5-seconds limit and returns 429
+  // (or, sometimes, a plain-text notice instead of JSON) whenever a visitor's
+  // IP has been sharing that budget with other traffic. A couple of quiet,
+  // spaced-out retries absorb that transient case so real visitors aren't
+  // shown a scary error for something that clears up in a few seconds.
+  const RETRY_DELAYS_MS = [4000, 7000];
+
+  async function fetchLive() {
+    let lastError;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        return await fetchLiveOnce();
+      } catch (error) {
+        lastError = error;
+        const isRateLimited = error.status === 429;
+        if (!isRateLimited || attempt === RETRY_DELAYS_MS.length) throw error;
+        console.warn(`GDELT rate-limited (attempt ${attempt + 1}); retrying…`, error);
+        await sleep(RETRY_DELAYS_MS[attempt]);
+      }
+    }
+    throw lastError;
   }
 
   function dedupeAndSort(articles) {
@@ -1286,7 +1317,7 @@
       els.lastSearched.textContent = formatDateTime(new Date());
 
       if (searchFailed) {
-        els.errorMessage.textContent = `The live search is temporarily unavailable (the news source may be rate-limiting requests).${fileProtocolWarning()} Please try again shortly.`;
+        els.errorMessage.textContent = `The live search is temporarily unavailable — the news source is rate-limiting requests and a few automatic retries didn't clear it.${fileProtocolWarning()} Please try again in a moment.`;
         els.errorState.classList.remove("hidden");
         els.emptyState.classList.add("hidden");
         els.statusText.textContent = "Search unavailable";
