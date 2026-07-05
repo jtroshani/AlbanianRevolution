@@ -183,7 +183,7 @@
 
   /* ---------- Main container ---------- */
 
-  .container { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+  .container { max-width: 1180px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
 
   .toolbar {
     display: flex;
@@ -262,49 +262,65 @@
     100% { transform: translateX(350%); }
   }
 
-  /* ---------- Article list ---------- */
+  /* ---------- Article list (responsive grid) ---------- */
 
-  .article-list { display: flex; flex-direction: column; gap: 0.9rem; }
+  .article-list {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  @media (min-width: 640px) {
+    .article-list { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (min-width: 1000px) {
+    .article-list { grid-template-columns: repeat(3, 1fr); }
+  }
 
   .article-card {
     display: flex;
-    gap: 1rem;
-    align-items: flex-start;
+    flex-direction: column;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-left: 4px solid var(--albania-red);
+    border-top: 4px solid var(--albania-red);
     border-radius: var(--radius);
-    padding: 1rem 1.2rem;
-    text-decoration: none;
-    color: inherit;
+    overflow: hidden;
     box-shadow: var(--shadow);
     transition: transform 0.12s ease, box-shadow 0.12s ease;
   }
 
   .article-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.06), 0 8px 20px rgba(0,0,0,0.1);
+    transform: translateY(-3px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.06), 0 10px 24px rgba(0,0,0,0.12);
   }
 
   .article-card__image {
-    flex: 0 0 auto;
-    width: 128px;
-    height: 92px;
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
     object-fit: cover;
-    border-radius: 8px;
     background: var(--bg);
   }
 
-  .article-card__body { flex: 1 1 auto; min-width: 0; }
+  .article-card__body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem 1.2rem 1.1rem;
+  }
 
-  .article-card__title { margin: 0 0 0.35rem; font-size: 1.05rem; font-weight: 700; color: var(--text); }
+  .article-card__title { margin: 0 0 0.4rem; font-size: 1.05rem; font-weight: 700; line-height: 1.3; }
+  .article-card__title a { color: var(--text); text-decoration: none; }
+  .article-card__title a:hover { text-decoration: underline; }
 
   .article-card__summary {
-    margin: 0 0 0.55rem;
+    margin: 0 0 0.7rem;
     font-size: 0.9rem;
     color: var(--text-muted);
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -318,6 +334,7 @@
     align-items: center;
     font-size: 0.78rem;
     color: var(--text-muted);
+    margin-bottom: 0.85rem;
   }
 
   .pill {
@@ -330,6 +347,83 @@
   }
 
   .pill--lang { text-transform: uppercase; letter-spacing: 0.03em; }
+
+  .article-card__footer {
+    margin-top: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .article-card__readmore { font-size: 0.82rem; font-weight: 700; color: var(--albania-red); text-decoration: none; white-space: nowrap; }
+  .article-card__readmore:hover { text-decoration: underline; }
+
+  .share-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+  .share-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+
+  .share-btn:hover {
+    background: var(--albania-red);
+    border-color: var(--albania-red);
+    color: #fff;
+  }
+
+  /* ---------- Pagination ---------- */
+
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-top: 2rem;
+  }
+
+  .page-btn {
+    min-width: 2.2rem;
+    text-align: center;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.45rem 0.7rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+
+  .page-btn:hover:not(:disabled) { border-color: var(--albania-red); }
+
+  .page-btn.active {
+    background: var(--albania-red);
+    border-color: var(--albania-red);
+    color: #fff;
+  }
+
+  .page-btn:disabled { opacity: 0.4; cursor: default; }
+
+  .page-btn--nav { font-weight: 700; }
+
+  .pagination__ellipsis { padding: 0 0.3rem; color: var(--text-muted); }
 
   /* ---------- Empty / error states ---------- */
 
@@ -373,11 +467,6 @@
     .hero__controls { justify-content: center; }
     .toolbar { flex-direction: column; }
     .toolbar__meta { text-align: left; }
-  }
-
-  @media (max-width: 480px) {
-    .article-card { flex-direction: column; }
-    .article-card__image { width: 100%; height: 160px; }
   }
 
   @media (max-width: 420px) {
@@ -429,6 +518,8 @@
     <div id="categoryBar" class="category-bar" role="group" aria-label="Filter articles by topic"></div>
 
     <section id="articleList" class="article-list" aria-live="polite"></section>
+
+    <nav id="pagination" class="pagination hidden" aria-label="Article pages"></nav>
 
     <section id="emptyState" class="empty-state hidden">
       <p>No new articles found right now. Try refreshing again shortly.</p>
@@ -499,7 +590,7 @@
   // revolta shqiptare.
   const CLIENT_GDELT_QUERY =
     "(Albania OR Albanian OR Tirana OR Shqip) (protest OR protests OR demonstration OR demonstrations OR revolt OR uprising OR unrest OR riot OR opposition OR resignation OR flamingo)";
-  const MAX_RECORDS = 100;
+  const MAX_RECORDS = 250; // GDELT's per-query maximum — gives a real pool to paginate through
   const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
   const PLACE_KEYWORDS = ["albania", "albanian", "tirana", "tirane", "shqip", "kosov"];
@@ -532,6 +623,7 @@
     loadingBar: document.getElementById("loadingBar"),
     categoryBar: document.getElementById("categoryBar"),
     articleList: document.getElementById("articleList"),
+    pagination: document.getElementById("pagination"),
     emptyState: document.getElementById("emptyState"),
     errorState: document.getElementById("errorState"),
     errorMessage: document.getElementById("errorMessage"),
@@ -927,7 +1019,8 @@
     return categoryList;
   }
 
-  const state = { articles: [], activeCategory: CATEGORY_LABEL_ALL };
+  const PAGE_SIZE = 20;
+  const state = { articles: [], activeCategory: CATEGORY_LABEL_ALL, page: 1 };
 
   function renderCategoryBar(categories, totalCount) {
     els.categoryBar.innerHTML = "";
@@ -940,6 +1033,7 @@
       btn.innerHTML = `${label} <span class="category-btn__count">(${count})</span>`;
       btn.addEventListener("click", () => {
         state.activeCategory = label;
+        state.page = 1;
         renderCategoryBar(categories, totalCount);
         applyFilter();
       });
@@ -956,11 +1050,74 @@
         ? state.articles
         : state.articles.filter((a) => a.category === state.activeCategory);
 
-    renderArticles(filtered);
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    state.page = Math.min(Math.max(1, state.page), totalPages);
+
+    const start = (state.page - 1) * PAGE_SIZE;
+    renderArticles(filtered.slice(start, start + PAGE_SIZE));
+    renderPagination(state.page, totalPages);
+
     els.resultCount.textContent =
       state.activeCategory === CATEGORY_LABEL_ALL
         ? `${filtered.length} article${filtered.length === 1 ? "" : "s"} found`
         : `${filtered.length} of ${state.articles.length} articles — ${state.activeCategory}`;
+  }
+
+  function renderPagination(page, totalPages) {
+    els.pagination.innerHTML = "";
+
+    if (totalPages <= 1) {
+      els.pagination.classList.add("hidden");
+      return;
+    }
+    els.pagination.classList.remove("hidden");
+
+    const goToPage = (p) => {
+      state.page = Math.min(Math.max(1, p), totalPages);
+      applyFilter();
+      els.articleList.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const makeBtn = (label, targetPage, opts = {}) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `page-btn${opts.nav ? " page-btn--nav" : ""}${opts.active ? " active" : ""}`;
+      btn.textContent = label;
+      btn.disabled = !!opts.disabled;
+      if (!opts.disabled) btn.addEventListener("click", () => goToPage(targetPage));
+      return btn;
+    };
+
+    els.pagination.appendChild(makeBtn("‹ Prev", page - 1, { nav: true, disabled: page === 1 }));
+
+    // Compact page list: first, last, current, and current's immediate
+    // neighbors, with an ellipsis filling any gap between shown numbers.
+    const pagesToShow = new Set([1, totalPages, page, page - 1, page + 1]);
+    let lastShown = 0;
+    for (let p = 1; p <= totalPages; p++) {
+      if (!pagesToShow.has(p) || p < 1 || p > totalPages) continue;
+      if (p - lastShown > 1) {
+        const ellipsis = document.createElement("span");
+        ellipsis.className = "pagination__ellipsis";
+        ellipsis.textContent = "…";
+        els.pagination.appendChild(ellipsis);
+      }
+      els.pagination.appendChild(makeBtn(String(p), p, { active: p === page }));
+      lastShown = p;
+    }
+
+    els.pagination.appendChild(makeBtn("Next ›", page + 1, { nav: true, disabled: page === totalPages }));
+  }
+
+  function buildShareLinks(article) {
+    const url = encodeURIComponent(article.url);
+    const text = encodeURIComponent(article.title || "");
+    return {
+      Facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`,
+      X: `https://twitter.com/intent/tweet?url=${url}&text=${text}`,
+      LinkedIn: `https://www.linkedin.com/sharing/share-offsite/?url=${url}`,
+      WhatsApp: `https://api.whatsapp.com/send?text=${text}%20${url}`,
+    };
   }
 
   function renderArticles(articles) {
@@ -968,21 +1125,26 @@
     const fragment = document.createDocumentFragment();
 
     articles.forEach((article) => {
-      const card = document.createElement("a");
+      const card = document.createElement("div");
       card.className = "article-card";
-      card.href = article.url;
-      card.target = "_blank";
-      card.rel = "noopener noreferrer";
 
       if (article.image) {
+        const imgLink = document.createElement("a");
+        imgLink.href = article.url;
+        imgLink.target = "_blank";
+        imgLink.rel = "noopener noreferrer";
+        imgLink.tabIndex = -1;
+
         const img = document.createElement("img");
         img.className = "article-card__image";
         img.src = article.image;
         img.alt = "";
         img.loading = "lazy";
         img.referrerPolicy = "no-referrer";
-        img.onerror = () => img.remove();
-        card.appendChild(img);
+        img.onerror = () => imgLink.remove();
+
+        imgLink.appendChild(img);
+        card.appendChild(imgLink);
       }
 
       const body = document.createElement("div");
@@ -990,7 +1152,12 @@
 
       const title = document.createElement("h2");
       title.className = "article-card__title";
-      title.textContent = article.title || "Untitled article";
+      const titleLink = document.createElement("a");
+      titleLink.href = article.url;
+      titleLink.target = "_blank";
+      titleLink.rel = "noopener noreferrer";
+      titleLink.textContent = article.title || "Untitled article";
+      title.appendChild(titleLink);
       body.appendChild(title);
 
       const summary = document.createElement("p");
@@ -1035,6 +1202,33 @@
       }
 
       body.appendChild(meta);
+
+      const footer = document.createElement("div");
+      footer.className = "article-card__footer";
+
+      const readMore = document.createElement("a");
+      readMore.className = "article-card__readmore";
+      readMore.href = article.url;
+      readMore.target = "_blank";
+      readMore.rel = "noopener noreferrer";
+      readMore.textContent = "Read full article →";
+      footer.appendChild(readMore);
+
+      const shareRow = document.createElement("div");
+      shareRow.className = "share-row";
+      Object.entries(buildShareLinks(article)).forEach(([label, href]) => {
+        const shareBtn = document.createElement("a");
+        shareBtn.className = "share-btn";
+        shareBtn.href = href;
+        shareBtn.target = "_blank";
+        shareBtn.rel = "noopener noreferrer";
+        shareBtn.textContent = label;
+        shareBtn.setAttribute("aria-label", `Share on ${label}`);
+        shareRow.appendChild(shareBtn);
+      });
+      footer.appendChild(shareRow);
+
+      body.appendChild(footer);
       card.appendChild(body);
       fragment.appendChild(card);
     });
@@ -1073,6 +1267,7 @@
       const categories = categorizeArticles(articles); // mutates each article with a .category
       state.articles = articles;
       state.activeCategory = CATEGORY_LABEL_ALL;
+      state.page = 1;
       renderCategoryBar(categories, articles.length);
       applyFilter();
 
@@ -1082,8 +1277,11 @@
       els.statusText.textContent = "Up to date";
     } else {
       state.articles = [];
+      state.page = 1;
       els.articleList.innerHTML = "";
       els.categoryBar.innerHTML = "";
+      els.pagination.innerHTML = "";
+      els.pagination.classList.add("hidden");
       els.resultCount.textContent = "";
       els.lastSearched.textContent = formatDateTime(new Date());
 
