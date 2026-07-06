@@ -1561,7 +1561,7 @@
       els.emptyState.classList.add("hidden");
       els.errorState.classList.add("hidden");
       els.lastSearched.textContent = formatDateTime(new Date());
-      els.statusText.textContent = searchFailed ? "Showing cached articles — live search unavailable" : "Up to date";
+      els.statusText.textContent = searchFailed ? "Showing cached articles" : "Up to date";
     } else {
       state.articles = [];
       state.page = 1;
