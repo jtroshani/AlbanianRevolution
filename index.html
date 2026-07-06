@@ -742,12 +742,21 @@
   // faked; each card is honest about that instead of showing invented text.
 
   const GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc";
-  // Encodes (in English and Albanian): Albania protests, Albanian
-  // demonstrations, protests in Tirana, Albanian government protests,
-  // Albanian opposition protests, protesta ne Shqiperi, protesta ne Tirane,
-  // revolta shqiptare.
-  const CLIENT_GDELT_QUERY =
-    "(Albania OR Albanian OR Tirana OR Shqip) (protest OR protests OR demonstration OR demonstrations OR revolt OR uprising OR unrest OR riot OR opposition OR resignation OR flamingo)";
+  // Two queries, run in sequence and merged (GDELT enforces a query-length
+  // cap, so this stays as two shorter queries rather than one long one):
+  //  1. General movement coverage — encodes (in English and Albanian):
+  //     Albania protests, Albanian demonstrations, protests in Tirana,
+  //     Albanian government protests, Albanian opposition protests,
+  //     protesta ne Shqiperi, protesta ne Tirane, revolta shqiptare.
+  //  2. International institutional/political reaction — the European
+  //     Parliament adopted a resolution on Albania over the Vjosa-Narta
+  //     protected area and "Chapter 27" accession requirements, and the
+  //     European Commission has publicly urged Albania to act; this query
+  //     surfaces that kind of EU/government/diplomatic coverage specifically.
+  const CLIENT_GDELT_QUERIES = [
+    "(Albania OR Albanian OR Tirana OR Shqip) (protest OR protests OR demonstration OR demonstrations OR revolt OR uprising OR unrest OR riot OR opposition OR resignation OR flamingo)",
+    "(Albania OR Tirana OR Zvernec) (European Parliament OR European Commission OR Brussels OR MEP OR McAllister OR ambassador OR diplomat OR Bundestag OR Congress OR enlargement)",
+  ];
   const MAX_RECORDS = 250; // GDELT's per-query maximum — gives a real pool to paginate through
   const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
@@ -765,6 +774,18 @@
   // movement (its figures, the resort project, its own nickname).
   const MOVEMENT_ANCHORS = [
     "flamingo", "kushner", "zvernec", "narta", "rama", "berisha", "resort", "trump", "kryeministr",
+  ];
+  // European Parliament / European Commission / other government or
+  // diplomatic statements about the situation are relevant even when they
+  // don't use protest-specific wording at all (e.g. "European Commission
+  // urges Albania to act on Chapter 27 benchmark") — for these, a place
+  // mention plus an institutional mention is treated as sufficient on its
+  // own, since coverage combining the two is overwhelmingly about this
+  // same situation right now.
+  const INSTITUTION_KEYWORDS = [
+    "european parliament", "european commission", "european union", "brussels",
+    "mep", "mcallister", "marta kos", "ambassador", "diplomat", "bundestag",
+    "congress", "state department", "enlargement",
   ];
   // Coverage that just says "Nth day/night [in a row]" without naming any
   // specific figure is still a strong, distinctive signal of this ongoing,
@@ -795,11 +816,14 @@
   function isRelevant(title) {
     const haystack = normalize(title);
     const hasPlace = PLACE_KEYWORDS.some((k) => haystack.includes(k));
+    if (!hasPlace) return false;
+
+    const hasInstitution = INSTITUTION_KEYWORDS.some((k) => haystack.includes(k));
     const hasTopic = TOPIC_KEYWORDS.some((k) => haystack.includes(k));
-    if (!hasPlace || !hasTopic) return false;
+    if (!hasTopic && !hasInstitution) return false;
 
     const isAboutTirana = haystack.includes("tirana") || haystack.includes("tirane");
-    if (isAboutTirana) return true;
+    if (isAboutTirana || hasInstitution) return true;
 
     return MOVEMENT_ANCHORS.some((k) => haystack.includes(k)) || DAY_COUNT_PATTERN.test(haystack);
   }
@@ -862,9 +886,9 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function fetchLiveOnce() {
+  async function fetchLiveOnce(query) {
     const params = new URLSearchParams({
-      query: CLIENT_GDELT_QUERY,
+      query,
       mode: "artlist",
       maxrecords: String(MAX_RECORDS),
       sort: "datedesc",
@@ -912,11 +936,11 @@
   // failing fast.
   const RETRY_DELAYS_MS = [5000, 9000, 14000, 20000];
 
-  async function fetchLive() {
+  async function fetchLive(query) {
     let lastError;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       try {
-        return await fetchLiveOnce();
+        return await fetchLiveOnce(query);
       } catch (error) {
         lastError = error;
         const isRateLimited = error.status === 429;
@@ -928,6 +952,29 @@
       }
     }
     throw lastError;
+  }
+
+  // Runs both queries in sequence (spaced out to be polite to GDELT's shared
+  // rate-limit budget) and merges whatever succeeds. One query failing
+  // entirely after its own retries doesn't block the other from being tried.
+  async function fetchAllLive() {
+    const merged = [];
+    let anySucceeded = false;
+    for (let i = 0; i < CLIENT_GDELT_QUERIES.length; i++) {
+      if (i > 0) await sleep(6000);
+      try {
+        merged.push(...(await fetchLive(CLIENT_GDELT_QUERIES[i])));
+        anySucceeded = true;
+      } catch (error) {
+        console.warn(`Live query ${i + 1}/${CLIENT_GDELT_QUERIES.length} failed after retries:`, error);
+      }
+    }
+    if (!anySucceeded) {
+      const err = new Error("All live search queries failed");
+      err.status = 429;
+      throw err;
+    }
+    return merged;
   }
 
   // The embedded <script id="cachedArticles"> block is rewritten in place by
@@ -1482,7 +1529,7 @@
     let searchFailed = false;
 
     try {
-      liveArticles = await fetchLive();
+      liveArticles = await fetchAllLive();
     } catch (error) {
       console.warn("Live GDELT search failed:", error);
       searchFailed = true;
