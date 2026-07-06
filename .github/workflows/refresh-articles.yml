@@ -1,0 +1,355 @@
+name: Refresh cached article summaries
+
+on:
+  schedule:
+    # Every 6 hours. GitHub may delay scheduled runs by a few minutes under load.
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-articles
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch real article summaries and update index.html
+        run: |
+          cat > /tmp/update-articles.mjs << 'SCRIPT_EOF'
+          // Rebuilds the <script id="cachedArticles"> block inside index.html with
+          // real, de-duplicated, relevance-filtered articles, each enriched with a
+          // genuine summary scraped from the article's own page (its own
+          // <meta name="description">/og:description — whatever language that
+          // publisher writes in, English or Albanian, not translated or invented).
+          // That scraping step only works server-side (publishers don't grant
+          // browsers cross-origin access to read their own HTML), which is why this
+          // runs here on a schedule instead of in the browser.
+          //
+          // The relevance-filter logic (normalize/isRelevant/keyword lists) is
+          // extracted directly out of index.html's own <script> rather than
+          // duplicated here, so the two can never drift out of sync — this file is
+          // the only other file involved, and it doesn't hold a second copy of that
+          // logic, just the plumbing to reuse the real one.
+
+          import { readFile, writeFile } from "node:fs/promises";
+          import path from "node:path";
+          import { fileURLToPath } from "node:url";
+
+          const __dirname = path.dirname(fileURLToPath(import.meta.url));
+          const INDEX_PATH = process.env.INDEX_HTML_PATH || path.join(__dirname, "index.html");
+
+          const GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc";
+          const MAX_RECORDS = 250;
+          const MAX_ENRICHED_ARTICLES = 150;
+          const ARTICLE_FETCH_TIMEOUT_MS = 7000;
+          const ARTICLE_FETCH_CONCURRENCY = 6;
+
+          function sleep(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+          }
+
+          function extractBlock(script, marker, endMarker) {
+            const start = script.indexOf(marker);
+            if (start === -1) throw new Error(`Could not find "${marker}" in index.html`);
+            if (endMarker) {
+              const end = script.indexOf(endMarker, start);
+              return script.slice(start, end);
+            }
+            // Brace-matched extraction for `function name(...) { ... }` blocks.
+            let depth = 0;
+            let i = script.indexOf("{", start);
+            for (; i < script.length; i++) {
+              if (script[i] === "{") depth++;
+              if (script[i] === "}") {
+                depth--;
+                if (depth === 0) return script.slice(start, i + 1);
+              }
+            }
+            throw new Error(`Unbalanced braces extracting "${marker}"`);
+          }
+
+          function sliceConst(script, marker, terminator) {
+            const start = script.indexOf(marker);
+            if (start === -1) throw new Error(`Could not find "${marker}" in index.html`);
+            const end = script.indexOf(terminator, start);
+            return script.slice(start, end + terminator.length);
+          }
+
+          async function loadRelevanceLogic(html) {
+            const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+
+            const code = [
+              sliceConst(script, "const PLACE_KEYWORDS", "];"),
+              sliceConst(script, "const TOPIC_KEYWORDS", "];"),
+              sliceConst(script, "const MOVEMENT_ANCHORS", "];"),
+              sliceConst(script, "const DAY_COUNT_PATTERN", ";"),
+              extractBlock(script, "function normalize"),
+              extractBlock(script, "function isRelevant"),
+            ].join("\n\n");
+
+            const module = { exports: {} };
+            const fn = new Function("module", "exports", `${code}\nmodule.exports = { isRelevant, normalize };`);
+            fn(module, module.exports);
+            return module.exports;
+          }
+
+          async function loadClientQuery(html) {
+            const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+            const start = script.indexOf("const CLIENT_GDELT_QUERY");
+            const end = script.indexOf(";", start);
+            const decl = script.slice(start, end + 1);
+            const module = { exports: {} };
+            const fn = new Function("module", `${decl}\nmodule.exports = CLIENT_GDELT_QUERY;`);
+            fn(module);
+            return module.exports;
+          }
+
+          async function fetchGdeltOnce(query) {
+            const params = new URLSearchParams({
+              query,
+              mode: "artlist",
+              maxrecords: String(MAX_RECORDS),
+              sort: "datedesc",
+              format: "json",
+            });
+            const url = `${GDELT_ENDPOINT}?${params.toString()}`;
+            const res = await fetch(url, { headers: { "User-Agent": "AlbanianRevolutionNewsTracker/1.0" } });
+            const text = await res.text();
+            if (!res.ok) throw new Error(`GDELT request failed with status ${res.status}: ${text.slice(0, 200)}`);
+            if (!text.trim()) return [];
+            try {
+              return JSON.parse(text).articles || [];
+            } catch {
+              throw new Error(`GDELT returned a non-JSON (likely rate-limited) response: ${text.slice(0, 200)}`);
+            }
+          }
+
+          async function fetchGdelt(query, { retries = 5, baseDelayMs = 6000 } = {}) {
+            let lastError;
+            for (let attempt = 1; attempt <= retries; attempt++) {
+              try {
+                return await fetchGdeltOnce(query);
+              } catch (error) {
+                lastError = error;
+                console.warn(`GDELT attempt ${attempt}/${retries} failed: ${error.message}`);
+                if (attempt < retries) await sleep(baseDelayMs * attempt);
+              }
+            }
+            throw lastError;
+          }
+
+          function normalizeUrl(url) {
+            try {
+              const u = new URL(url);
+              u.search = "";
+              u.hash = "";
+              let s = u.toString();
+              if (s.endsWith("/")) s = s.slice(0, -1);
+              return s.toLowerCase();
+            } catch {
+              return (url || "").toLowerCase();
+            }
+          }
+
+          function titleTokens(title, normalize) {
+            return new Set(
+              normalize(title).replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2)
+            );
+          }
+
+          function jaccard(a, b) {
+            if (!a.size || !b.size) return 0;
+            let intersection = 0;
+            for (const tok of a) if (b.has(tok)) intersection++;
+            return intersection / (a.size + b.size - intersection);
+          }
+
+          function parseSeenDate(seendate) {
+            if (!seendate || seendate.length < 15) return null;
+            const iso = `${seendate.slice(0, 4)}-${seendate.slice(4, 6)}-${seendate.slice(6, 8)}T${seendate.slice(9, 11)}:${seendate.slice(11, 13)}:${seendate.slice(13, 15)}Z`;
+            const date = new Date(iso);
+            return Number.isNaN(date.getTime()) ? null : date;
+          }
+
+          function dedupe(articles, normalize) {
+            const byUrl = new Map();
+            const kept = [];
+            for (const article of articles) {
+              const key = normalizeUrl(article.url);
+              if (!key || byUrl.has(key)) continue;
+              const tokens = titleTokens(article.title, normalize);
+              const publishedAt = parseSeenDate(article.seendate);
+              const isNearDuplicate = kept.some((existing) => {
+                if (!existing.publishedAt || !publishedAt) return false;
+                const hoursApart = Math.abs(existing.publishedAt - publishedAt) / 3600000;
+                if (hoursApart > 48) return false;
+                return jaccard(existing.tokens, tokens) >= 0.82;
+              });
+              if (isNearDuplicate) continue;
+              byUrl.set(key, true);
+              kept.push({ ...article, tokens, publishedAt });
+            }
+            return kept;
+          }
+
+          async function mapLimit(items, limit, fn) {
+            const results = new Array(items.length);
+            let index = 0;
+            async function worker() {
+              while (index < items.length) {
+                const current = index++;
+                results[current] = await fn(items[current], current);
+              }
+            }
+            await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+            return results;
+          }
+
+          const NAMED_ENTITIES = {
+            amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " ",
+            euml: "ë", Euml: "Ë", ccedil: "ç", Ccedil: "Ç", eacute: "é", Eacute: "É",
+            egrave: "è", Egrave: "È", ecirc: "ê", Ecirc: "Ê", agrave: "à", Agrave: "À",
+            acirc: "â", Acirc: "Â", ograve: "ò", ocirc: "ô", ugrave: "ù", ucirc: "û",
+            iuml: "ï", uuml: "ü", ntilde: "ñ", Ntilde: "Ñ",
+            rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“",
+            ndash: "–", mdash: "—", hellip: "…",
+          };
+
+          function decodeHtmlEntities(str) {
+            return (str || "")
+              .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+              .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+              .replace(/&([a-zA-Z]+);/g, (match, name) => (name in NAMED_ENTITIES ? NAMED_ENTITIES[name] : match));
+          }
+
+          function extractMetaContent(html, key) {
+            const patterns = [
+              new RegExp(`<meta[^>]+(?:name|property)=["']${key}["'][^>]*content=["']([^"']*)["']`, "i"),
+              new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:name|property)=["']${key}["']`, "i"),
+            ];
+            for (const re of patterns) {
+              const match = html.match(re);
+              if (match && match[1]) return decodeHtmlEntities(match[1]).trim();
+            }
+            return null;
+          }
+
+          function truncate(text, maxLen) {
+            if (!text || text.length <= maxLen) return text;
+            const cut = text.slice(0, maxLen);
+            const lastSpace = cut.lastIndexOf(" ");
+            return `${cut.slice(0, lastSpace > 0 ? lastSpace : maxLen)}…`;
+          }
+
+          async function enrichWithSummary(article) {
+            try {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), ARTICLE_FETCH_TIMEOUT_MS);
+              const res = await fetch(article.url, {
+                signal: controller.signal,
+                redirect: "follow",
+                headers: { "User-Agent": "Mozilla/5.0 (compatible; AlbanianRevolutionNewsTracker/1.0)" },
+              });
+              clearTimeout(timer);
+              if (!res.ok) return { ...article, summary: null };
+              const contentType = res.headers.get("content-type") || "";
+              if (!contentType.includes("html")) return { ...article, summary: null };
+              const html = await res.text();
+              const description = extractMetaContent(html, "og:description") || extractMetaContent(html, "description");
+              const ogImage = extractMetaContent(html, "og:image");
+              return {
+                ...article,
+                summary: description ? truncate(description, 220) : null,
+                socialimage: article.socialimage || ogImage || null,
+              };
+            } catch {
+              return { ...article, summary: null };
+            }
+          }
+
+          async function main() {
+            const html = await readFile(INDEX_PATH, "utf8");
+            const { isRelevant, normalize } = await loadRelevanceLogic(html);
+            const query = await loadClientQuery(html);
+
+            console.log(`Querying GDELT: ${query}`);
+            const raw = await fetchGdelt(query);
+            console.log(`GDELT returned ${raw.length} raw articles`);
+
+            const relevant = raw.filter((a) => isRelevant(a.title));
+            console.log(`${relevant.length} passed the relevance filter`);
+
+            const deduped = dedupe(relevant, normalize);
+            console.log(`${deduped.length} remain after de-duplication`);
+
+            const toEnrich = deduped.slice(0, MAX_ENRICHED_ARTICLES);
+            console.log(`Fetching real summaries for ${toEnrich.length} articles...`);
+            const enriched = await mapLimit(toEnrich, ARTICLE_FETCH_CONCURRENCY, enrichWithSummary);
+
+            const articles = enriched
+              .map((a) => ({
+                title: decodeHtmlEntities(a.title || "").trim(),
+                url: a.url,
+                domain: a.domain || null,
+                country: a.sourcecountry || null,
+                language: a.language || null,
+                publishedAt: a.publishedAt ? a.publishedAt.toISOString() : null,
+                image: a.socialimage || null,
+                summary: a.summary || null,
+              }))
+              .sort((a, b) => {
+                if (!a.publishedAt) return 1;
+                if (!b.publishedAt) return -1;
+                return new Date(b.publishedAt) - new Date(a.publishedAt);
+              });
+
+            if (articles.length === 0) {
+              throw new Error("No articles survived filtering — aborting without touching index.html so a bad run can't wipe out good cached data.");
+            }
+
+            const payload = JSON.stringify({ generatedAt: new Date().toISOString(), articles });
+
+            const updatedHtml = html.replace(
+              /<script type="application\/json" id="cachedArticles">[\s\S]*?<\/script>/,
+              `<script type="application/json" id="cachedArticles">${payload}</script>`
+            );
+
+            if (updatedHtml === html) {
+              throw new Error('Could not find the <script id="cachedArticles"> block to update in index.html');
+            }
+
+            await writeFile(INDEX_PATH, updatedHtml, "utf8");
+            console.log(`Wrote ${articles.length} articles into ${INDEX_PATH}`);
+          }
+
+          main().catch((error) => {
+            console.error("update-articles.mjs failed:", error);
+            process.exitCode = 1;
+          });
+
+          SCRIPT_EOF
+          node /tmp/update-articles.mjs
+
+      - name: Commit updated index.html
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "No changes to index.html; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "chore: refresh cached article summaries [skip ci]"
+          git push
