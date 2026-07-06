@@ -1534,6 +1534,25 @@
       : "";
   }
 
+  // A script-triggered location.reload() only revalidates via a conditional
+  // GET — it can still be served from the browser's cache. Appending a
+  // one-off query param forces a genuine network re-fetch of index.html
+  // (the same effect as a manual Cmd/Ctrl+Shift+R), so the newest
+  // GitHub-Action-baked article cache is always picked up.
+  function hardRefresh() {
+    const url = new URL(window.location.href);
+    url.searchParams.set("_hardrefresh", Date.now().toString());
+    window.location.replace(url.toString());
+  }
+
+  // Strip that param back out immediately after the forced reload lands, so
+  // the address bar and any shared/bookmarked link stay clean.
+  if (new URL(window.location.href).searchParams.has("_hardrefresh")) {
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("_hardrefresh");
+    window.history.replaceState({}, "", cleanUrl.toString());
+  }
+
   async function refreshNews() {
     setLoading(true);
     els.errorState.classList.add("hidden");
@@ -1594,7 +1613,7 @@
     setLoading(false);
   }
 
-  els.refreshBtn.addEventListener("click", refreshNews);
+  els.refreshBtn.addEventListener("click", hardRefresh);
   els.retryBtn.addEventListener("click", refreshNews);
 
   refreshNews();
