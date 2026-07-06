@@ -152,6 +152,17 @@ jobs:
             throw lastError;
           }
 
+          function readExistingPinnedArticles(html) {
+            const match = html.match(/<script type="application\/json" id="cachedArticles">([\s\S]*?)<\/script>/);
+            if (!match) return [];
+            try {
+              const data = JSON.parse(match[1]);
+              return (Array.isArray(data.articles) ? data.articles : []).filter((a) => a.pinned === true);
+            } catch {
+              return [];
+            }
+          }
+
           function normalizeUrl(url) {
             try {
               const u = new URL(url);
@@ -313,26 +324,46 @@ jobs:
             console.log(`Fetching real summaries for ${toEnrich.length} articles...`);
             const enriched = await mapLimit(toEnrich, ARTICLE_FETCH_CONCURRENCY, enrichWithSummary);
 
-            const articles = enriched
-              .map((a) => ({
-                title: decodeHtmlEntities(a.title || "").trim(),
-                url: a.url,
-                domain: a.domain || null,
-                country: a.sourcecountry || null,
-                language: a.language || null,
-                publishedAt: a.publishedAt ? a.publishedAt.toISOString() : null,
-                image: a.socialimage || null,
-                summary: a.summary || null,
-              }))
-              .sort((a, b) => {
-                if (!a.publishedAt) return 1;
-                if (!b.publishedAt) return -1;
-                return new Date(b.publishedAt) - new Date(a.publishedAt);
-              });
+            const fresh = enriched.map((a) => ({
+              title: decodeHtmlEntities(a.title || "").trim(),
+              url: a.url,
+              domain: a.domain || null,
+              country: a.sourcecountry || null,
+              language: a.language || null,
+              publishedAt: a.publishedAt ? a.publishedAt.toISOString() : null,
+              image: a.socialimage || null,
+              summary: a.summary || null,
+            }));
 
-            if (articles.length === 0) {
+            if (fresh.length === 0) {
               throw new Error("No articles survived filtering — aborting without touching index.html so a bad run can't wipe out good cached data.");
             }
+
+            // Manually pinned articles (see the "pinned" field on cached
+            // entries) must survive every automated refresh, even if GDELT
+            // no longer returns them. Carry the flag forward onto any fresh
+            // article that matches, and re-append any pinned article the
+            // fresh crawl didn't rediscover at all.
+            const existingPinned = readExistingPinnedArticles(html);
+            const pinnedUrls = new Set(existingPinned.map((a) => normalizeUrl(a.url)));
+
+            const freshWithPins = fresh.map((a) => ({
+              ...a,
+              pinned: pinnedUrls.has(normalizeUrl(a.url)),
+            }));
+            const freshUrls = new Set(freshWithPins.map((a) => normalizeUrl(a.url)));
+            const missingPinned = existingPinned.filter((a) => !freshUrls.has(normalizeUrl(a.url)));
+
+            const articles = [...freshWithPins, ...missingPinned].sort((a, b) => {
+              const aPinned = a.pinned ? 1 : 0;
+              const bPinned = b.pinned ? 1 : 0;
+              if (aPinned !== bPinned) return bPinned - aPinned;
+              if (!a.publishedAt) return 1;
+              if (!b.publishedAt) return -1;
+              return new Date(b.publishedAt) - new Date(a.publishedAt);
+            });
+
+            console.log(`${missingPinned.length} pinned article(s) preserved from before (not rediscovered by this run)`);
 
             const payload = JSON.stringify({ generatedAt: new Date().toISOString(), articles });
 
