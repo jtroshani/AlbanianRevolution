@@ -340,7 +340,7 @@ jobs:
           });
 
           SCRIPT_EOF
-          node /tmp/update-articles.mjs
+          INDEX_HTML_PATH="$GITHUB_WORKSPACE/index.html" node /tmp/update-articles.mjs
 
       - name: Commit updated index.html
         run: |
