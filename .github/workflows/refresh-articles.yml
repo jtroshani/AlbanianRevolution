@@ -94,6 +94,7 @@ jobs:
               sliceConst(script, "const PLACE_KEYWORDS", "];"),
               sliceConst(script, "const TOPIC_KEYWORDS", "];"),
               sliceConst(script, "const MOVEMENT_ANCHORS", "];"),
+              sliceConst(script, "const INSTITUTION_KEYWORDS", "];"),
               sliceConst(script, "const DAY_COUNT_PATTERN", ";"),
               extractBlock(script, "function normalize"),
               extractBlock(script, "function isRelevant"),
@@ -105,13 +106,13 @@ jobs:
             return module.exports;
           }
 
-          async function loadClientQuery(html) {
+          async function loadClientQueries(html) {
             const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-            const start = script.indexOf("const CLIENT_GDELT_QUERY");
-            const end = script.indexOf(";", start);
-            const decl = script.slice(start, end + 1);
+            const start = script.indexOf("const CLIENT_GDELT_QUERIES");
+            const end = script.indexOf("];", start);
+            const decl = script.slice(start, end + 2);
             const module = { exports: {} };
-            const fn = new Function("module", `${decl}\nmodule.exports = CLIENT_GDELT_QUERY;`);
+            const fn = new Function("module", `${decl}\nmodule.exports = CLIENT_GDELT_QUERIES;`);
             fn(module);
             return module.exports;
           }
@@ -282,11 +283,24 @@ jobs:
           async function main() {
             const html = await readFile(INDEX_PATH, "utf8");
             const { isRelevant, normalize } = await loadRelevanceLogic(html);
-            const query = await loadClientQuery(html);
+            const queries = await loadClientQueries(html);
 
-            console.log(`Querying GDELT: ${query}`);
-            const raw = await fetchGdelt(query);
-            console.log(`GDELT returned ${raw.length} raw articles`);
+            const raw = [];
+            for (let i = 0; i < queries.length; i++) {
+              if (i > 0) await sleep(6000);
+              console.log(`Querying GDELT (${i + 1}/${queries.length}): ${queries[i]}`);
+              try {
+                const results = await fetchGdelt(queries[i]);
+                console.log(`  -> ${results.length} raw articles`);
+                raw.push(...results);
+              } catch (error) {
+                // One query failing entirely (after its own retries) shouldn't
+                // block the other from being tried — only an empty `raw` at
+                // the end (checked below) aborts the run.
+                console.warn(`  -> query ${i + 1} failed after retries: ${error.message}`);
+              }
+            }
+            console.log(`GDELT returned ${raw.length} raw articles total`);
 
             const relevant = raw.filter((a) => isRelevant(a.title));
             console.log(`${relevant.length} passed the relevance filter`);
