@@ -95,6 +95,7 @@ jobs:
               sliceConst(script, "const TOPIC_KEYWORDS", "];"),
               sliceConst(script, "const MOVEMENT_ANCHORS", "];"),
               sliceConst(script, "const INSTITUTION_KEYWORDS", "];"),
+              sliceConst(script, "const MEP_PATTERN", ";"),
               sliceConst(script, "const DAY_COUNT_PATTERN", ";"),
               extractBlock(script, "function normalize"),
               extractBlock(script, "function isRelevant"),
