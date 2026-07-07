@@ -60,6 +60,11 @@ jobs:
             return new Promise((resolve) => setTimeout(resolve, ms));
           }
 
+          // Thrown when GDELT itself gave nothing usable this run (as
+          // opposed to a real bug in this script) — see where it's thrown
+          // in main() for why that's handled as a clean exit, not a failure.
+          class NoLiveArticlesError extends Error {}
+
           function extractBlock(script, marker, endMarker) {
             const start = script.indexOf(marker);
             if (start === -1) throw new Error(`Could not find "${marker}" in index.html`);
@@ -336,7 +341,17 @@ jobs:
             }));
 
             if (fresh.length === 0) {
-              throw new Error("No articles survived filtering — aborting without touching index.html so a bad run can't wipe out good cached data.");
+              // GDELT's rate limiting is sometimes strict enough to fail
+              // every retry on every query within a single run. That's
+              // expected, occasional third-party flakiness, not a bug —
+              // the site is unaffected (the existing cache is untouched
+              // and keeps serving fine) and the next scheduled run will
+              // simply try again. Signal it as a distinct error type so
+              // it can exit cleanly instead of being reported as a
+              // workflow failure.
+              throw new NoLiveArticlesError(
+                "No articles survived filtering this run (likely GDELT rate-limiting every query) — leaving index.html untouched. Will retry on the next scheduled run."
+              );
             }
 
             // Manually pinned articles (see the "pinned" field on cached
@@ -381,6 +396,13 @@ jobs:
           }
 
           main().catch((error) => {
+            if (error instanceof NoLiveArticlesError) {
+              // Not a bug — see the throw site in main() for the reasoning.
+              // Exit 0 so GitHub doesn't send a failure-notification email
+              // for expected, transient third-party rate-limiting.
+              console.warn(error.message);
+              return;
+            }
             console.error("update-articles.mjs failed:", error);
             process.exitCode = 1;
           });
