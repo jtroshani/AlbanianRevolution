@@ -1558,6 +1558,26 @@
     els.errorState.classList.add("hidden");
 
     const cache = readEmbeddedCache();
+    els.cacheUpdated.textContent = cache.generatedAt ? formatDateTime(new Date(cache.generatedAt)) : "not built yet";
+
+    // The embedded cache (with real, server-scraped summaries) costs zero
+    // network time, so show it immediately rather than leaving the page
+    // blank while the live search — which can take a while under GDELT's
+    // rate limiting — is still in flight. The live results are merged in
+    // below once they arrive.
+    const cachedOnly = dedupeAndSort(cache.articles);
+    const hadCachedArticles = cachedOnly.length > 0;
+    if (hadCachedArticles) {
+      const categories = categorizeArticles(cachedOnly);
+      state.articles = cachedOnly;
+      state.activeCategory = CATEGORY_LABEL_ALL;
+      state.page = 1;
+      renderCategoryBar(categories, cachedOnly.length);
+      applyFilter();
+      els.emptyState.classList.add("hidden");
+      els.statusText.textContent = "Showing cached articles — searching for updates…";
+    }
+
     let liveArticles = [];
     let searchFailed = false;
 
@@ -1568,19 +1588,18 @@
       searchFailed = true;
     }
 
-    // The embedded cache (with real, server-scraped summaries) is always
-    // available with zero network calls, so a live-search failure degrades
-    // to "show the cached articles" rather than a hard error whenever
-    // there's cached data to fall back on.
     const articles = dedupeAndSort([...cache.articles, ...liveArticles]);
-
-    els.cacheUpdated.textContent = cache.generatedAt ? formatDateTime(new Date(cache.generatedAt)) : "not built yet";
 
     if (articles.length > 0) {
       const categories = categorizeArticles(articles); // mutates each article with a .category
       state.articles = articles;
-      state.activeCategory = CATEGORY_LABEL_ALL;
-      state.page = 1;
+      // Only snap to "All"/page 1 if this is the first time articles have
+      // appeared this refresh — if the cache already rendered them above,
+      // leave whatever category/page the visitor has since clicked into.
+      if (!hadCachedArticles) {
+        state.activeCategory = CATEGORY_LABEL_ALL;
+        state.page = 1;
+      }
       renderCategoryBar(categories, articles.length);
       applyFilter();
 
