@@ -55,6 +55,12 @@ jobs:
           const MAX_ENRICHED_ARTICLES = 150;
           const ARTICLE_FETCH_TIMEOUT_MS = 7000;
           const ARTICLE_FETCH_CONCURRENCY = 6;
+          // Non-pinned articles older than this many days are dropped when
+          // merging (see main()) so the cache doesn't grow forever.
+          const ARTICLE_RETENTION_DAYS = 21;
+          // Hard ceiling on total cache size regardless of age, as a
+          // backstop against unbounded growth.
+          const MAX_TOTAL_ARTICLES = 400;
 
           function sleep(ms) {
             return new Promise((resolve) => setTimeout(resolve, ms));
@@ -157,12 +163,12 @@ jobs:
             throw lastError;
           }
 
-          function readExistingPinnedArticles(html) {
+          function readExistingArticles(html) {
             const match = html.match(/<script type="application\/json" id="cachedArticles">([\s\S]*?)<\/script>/);
             if (!match) return [];
             try {
               const data = JSON.parse(match[1]);
-              return (Array.isArray(data.articles) ? data.articles : []).filter((a) => a.pinned === true);
+              return Array.isArray(data.articles) ? data.articles : [];
             } catch {
               return [];
             }
@@ -340,45 +346,53 @@ jobs:
               summary: a.summary || null,
             }));
 
-            if (fresh.length === 0) {
-              // GDELT's rate limiting is sometimes strict enough to fail
-              // every retry on every query within a single run. That's
-              // expected, occasional third-party flakiness, not a bug —
-              // the site is unaffected (the existing cache is untouched
-              // and keeps serving fine) and the next scheduled run will
-              // simply try again. Signal it as a distinct error type so
-              // it can exit cleanly instead of being reported as a
-              // workflow failure.
-              throw new NoLiveArticlesError(
-                "No articles survived filtering this run (likely GDELT rate-limiting every query) — leaving index.html untouched. Will retry on the next scheduled run."
-              );
+            // Merge this run's fresh results into the EXISTING cache rather
+            // than replacing it outright. GDELT's rate limiting can make a
+            // single cycle return very few (or zero) usable articles — that
+            // used to silently overwrite a healthy, long-built-up cache
+            // with whatever scraps that one cycle found. Merging means a
+            // bad cycle can only fail to add anything; it can no longer
+            // delete anything a previous good cycle already found.
+            const existingArticles = readExistingArticles(html);
+            const merged = new Map(existingArticles.map((a) => [normalizeUrl(a.url), a]));
+
+            for (const a of fresh) {
+              const key = normalizeUrl(a.url);
+              const wasPinned = merged.get(key)?.pinned === true;
+              merged.set(key, { ...a, pinned: wasPinned });
             }
 
-            // Manually pinned articles (see the "pinned" field on cached
-            // entries) must survive every automated refresh, even if GDELT
-            // no longer returns them. Carry the flag forward onto any fresh
-            // article that matches, and re-append any pinned article the
-            // fresh crawl didn't rediscover at all.
-            const existingPinned = readExistingPinnedArticles(html);
-            const pinnedUrls = new Set(existingPinned.map((a) => normalizeUrl(a.url)));
+            const retentionCutoff = Date.now() - ARTICLE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+            let articles = Array.from(merged.values())
+              .filter((a) => a.pinned || !a.publishedAt || new Date(a.publishedAt).getTime() >= retentionCutoff)
+              .sort((a, b) => {
+                const aPinned = a.pinned ? 1 : 0;
+                const bPinned = b.pinned ? 1 : 0;
+                if (aPinned !== bPinned) return bPinned - aPinned;
+                if (!a.publishedAt) return 1;
+                if (!b.publishedAt) return -1;
+                return new Date(b.publishedAt) - new Date(a.publishedAt);
+              });
 
-            const freshWithPins = fresh.map((a) => ({
-              ...a,
-              pinned: pinnedUrls.has(normalizeUrl(a.url)),
-            }));
-            const freshUrls = new Set(freshWithPins.map((a) => normalizeUrl(a.url)));
-            const missingPinned = existingPinned.filter((a) => !freshUrls.has(normalizeUrl(a.url)));
+            if (articles.length > MAX_TOTAL_ARTICLES) {
+              const pinned = articles.filter((a) => a.pinned);
+              const rest = articles.filter((a) => !a.pinned).slice(0, MAX_TOTAL_ARTICLES - pinned.length);
+              articles = [...pinned, ...rest];
+            }
 
-            const articles = [...freshWithPins, ...missingPinned].sort((a, b) => {
-              const aPinned = a.pinned ? 1 : 0;
-              const bPinned = b.pinned ? 1 : 0;
-              if (aPinned !== bPinned) return bPinned - aPinned;
-              if (!a.publishedAt) return 1;
-              if (!b.publishedAt) return -1;
-              return new Date(b.publishedAt) - new Date(a.publishedAt);
-            });
+            console.log(
+              `Merged ${fresh.length} fresh article(s) into ${existingArticles.length} existing — ${articles.length} total after retention/cap (was ${existingArticles.length} before this run)`
+            );
 
-            console.log(`${missingPinned.length} pinned article(s) preserved from before (not rediscovered by this run)`);
+            if (articles.length === 0) {
+              // Only reachable if there was nothing in the cache to begin
+              // with AND this run found nothing either — a genuinely empty
+              // result, not just a quiet cycle. Exit cleanly rather than
+              // fail the workflow for what's still just GDELT flakiness.
+              throw new NoLiveArticlesError(
+                "No articles in the existing cache and none survived filtering this run — leaving index.html untouched. Will retry on the next scheduled run."
+              );
+            }
 
             const payload = JSON.stringify({ generatedAt: new Date().toISOString(), articles });
 
