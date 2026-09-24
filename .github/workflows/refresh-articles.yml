@@ -277,6 +277,30 @@ jobs:
             return `${cut.slice(0, lastSpace > 0 ? lastSpace : maxLen)}…`;
           }
 
+          async function verifyImageLoads(url) {
+            // A URL being present in a page's og:image (or GDELT's own
+            // socialimage field) doesn't mean it actually serves an image —
+            // bot-walled hosts return a CAPTCHA/challenge HTML page instead
+            // when fetched without a real browser. Confirm the content-type
+            // really is an image before trusting it.
+            if (!url) return false;
+            try {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 5000);
+              const res = await fetch(url, {
+                method: "HEAD",
+                signal: controller.signal,
+                redirect: "follow",
+                headers: { "User-Agent": "Mozilla/5.0 (compatible; AlbanianRevolutionNewsTracker/1.0)" },
+              });
+              clearTimeout(timer);
+              const contentType = res.headers.get("content-type") || "";
+              return res.ok && contentType.startsWith("image/");
+            } catch {
+              return false;
+            }
+          }
+
           async function enrichWithSummary(article) {
             try {
               const controller = new AbortController();
@@ -293,10 +317,12 @@ jobs:
               const html = await res.text();
               const description = extractMetaContent(html, "og:description") || extractMetaContent(html, "description");
               const ogImage = extractMetaContent(html, "og:image");
+              const candidateImage = article.socialimage || ogImage || null;
+              const imageIsValid = await verifyImageLoads(candidateImage);
               return {
                 ...article,
                 summary: description ? truncate(description, 220) : null,
-                socialimage: article.socialimage || ogImage || null,
+                socialimage: imageIsValid ? candidateImage : null,
               };
             } catch {
               return { ...article, summary: null };
